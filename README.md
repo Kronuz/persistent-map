@@ -51,6 +51,8 @@ ctest --test-dir build --output-on-failure
 
 The CMake target is `persistent_map::persistent_map`. Add this repository with `FetchContent` or `add_subdirectory`; it has no third-party dependencies. Tests and the example build only as the top-level project.
 
+CI covers Linux (GCC/Clang, x86_64/arm64), macOS (x86_64/arm64), FreeBSD and ASan/UBSan. TSan is excluded because the API confines all operations and releases to one executor. The allocation-denial test also replaces global allocation functions, which conflict with the TSan runtime interceptors.
+
 ## Provenance and license
 
 The tree derives from the [immutable AVL implementation](https://github.com/Kronuz/Detent/blob/f1487c2/src/detent_authority/persistent_map.hh) by Germán Méndez Bravo. The extraction retains its balancing and collection algorithm, adding stored comparator and standard allocator support. [MIT license](LICENSE).

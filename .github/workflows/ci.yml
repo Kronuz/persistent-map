@@ -11,3 +11,6 @@ concurrency:
 jobs:
   ci:
     uses: Kronuz/cpp-libraries/.github/workflows/cmake.yml@main
+    with:
+      # Ownership is confined to one executor; there is no concurrent API.
+      tsan: false
