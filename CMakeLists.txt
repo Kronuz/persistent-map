@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.16)
+project(persistent_map LANGUAGES CXX)
+
+add_library(persistent_map INTERFACE)
+add_library(persistent_map::persistent_map ALIAS persistent_map)
+target_include_directories(persistent_map INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(persistent_map INTERFACE cxx_std_20)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  enable_testing()
+  add_executable(persistent_map_test test/test.cc)
+  target_link_libraries(persistent_map_test PRIVATE persistent_map::persistent_map)
+  add_test(NAME persistent_map COMMAND persistent_map_test)
+  add_executable(persistent_map_demo examples/demo.cc)
+  target_link_libraries(persistent_map_demo PRIVATE persistent_map::persistent_map)
+endif()
