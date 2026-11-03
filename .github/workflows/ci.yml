@@ -3,8 +3,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
-  schedule:
-    - cron: '43 7 * * *'
+    inputs:
+      nightly: { type: boolean, default: false }
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -12,5 +12,6 @@ jobs:
   ci:
     uses: Kronuz/cpp-libraries/.github/workflows/cmake.yml@main
     with:
+      nightly: ${{ inputs.nightly || false }}
       # Ownership is confined to one executor; there is no concurrent API.
       tsan: false
