@@ -7,7 +7,10 @@ new root. [AGENTS.md](AGENTS.md) holds the rules for changing it.
 ## Versions and borrowed pointers
 
 Copies of a map share a root. `set` and `erase` return versions and copy the logarithmic path
-they change; the old version keeps the old path. Every node stores its height and its subtree
+they change; the old version keeps the old path. `erase_range(lower, upper)` removes the keys in
+`[lower, upper)`: it splits the tree below `lower` and from `upper` and joins the two sides, with
+O(log n) new nodes however many keys it removes. An empty or inverted range returns the same
+version. Every node stores its height and its subtree
 count, so `size()` is constant time.
 
 `find` returns a borrowed const value pointer. `cursor` and `cursor_from` retain their root and
@@ -46,7 +49,7 @@ originating arena, comparator and allocation policy. Assignment replaces that ow
 mutable-container allocator propagation does not apply.
 
 The comparator supplies a stable strict weak ordering across keys and heterogeneous lookup
-arguments. Keys and values are copyable, with nonthrowing destructors. Failed comparison,
+arguments; `erase_range` also compares its two bounds with each other. Keys and values are copyable, with nonthrowing destructors. Failed comparison,
 construction or allocation preserves prior logical versions; constructed garbage can remain
 queued until collection.
 

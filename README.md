@@ -16,7 +16,8 @@ historical versions of an ordered map on one executor.
 ## ✨ Highlights
 
 - **Versions share structure.** `set` and `erase` return a new map and copy
-  only the O(log n) path they change; copies share the root.
+  only the O(log n) path they change; copies share the root. `erase_range`
+  removes a key range with O(log n) new nodes however many keys it drops.
 - **Borrowed reads.** `find` returns a const pointer into the tree, and
   `cursor` and `cursor_from` walk in order on a fixed 128-entry stack with no
   allocation.

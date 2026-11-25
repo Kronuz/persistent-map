@@ -117,39 +117,109 @@ template <class Map, class Oracle> void agrees(const Map &map, const Oracle &ora
 	}
 	check(!cursor.next());
 }
+// Steps through one in-order walk from `lower`, checking each row against the oracle.
+template <class Map, class Oracle> struct Walk {
+	typename Map::Cursor cursor;
+	typename Oracle::const_iterator expected, end;
+	Walk(const Map &map, const Oracle &oracle, int lower)
+	    : cursor(map.cursor_from(lower)), expected(oracle.lower_bound(lower)), end(oracle.end()) {}
+	bool step() {
+		const auto row = cursor.next();
+		if (expected == end) {
+			check(!row);
+			return false;
+		}
+		check(row && *row->first == expected->first && *row->second == expected->second);
+		++expected;
+		return true;
+	}
+};
 void randomized() {
 	using Map = persistent_map::PersistentMap<int, int>;
+	using Oracle = std::map<int, int>;
+	struct Saved {
+		Map map;
+		Oracle oracle;
+		std::optional<Walk<Map, Oracle>> walk;
+	};
 	Map map;
-	std::map<int, int> oracle;
-	std::vector<std::pair<Map, std::map<int, int>>> saved;
+	Oracle oracle;
+	check(map.size() == 0 && map.height() == 0 && !map.find(0) && !map.cursor().next());
+	check(map.erase(1).size() == 0 && map.erase_range(0, 9).size() == 0);
+	std::vector<std::unique_ptr<Saved>> saved;
 	std::mt19937 random(4217);
-	for (int step = 0; step != 5000; ++step) {
-		const auto key = static_cast<int>(random() % 257);
-		if (random() % 3) {
+	auto any = [&] { return static_cast<int>(random() % 259) - 1; };
+	std::size_t ranges = 0, inverted = 0;
+	for (int step = 0; step != 20000; ++step) {
+		const auto key = any();
+		const auto operation = random() % 16;
+		if (operation < 10) {
 			map = map.set(key, step);
 			oracle[key] = step;
-		} else {
+		} else if (operation < 15) {
 			map = map.erase(key);
 			oracle.erase(key);
+		} else {
+			const auto upper = any();
+			map = map.erase_range(key, upper);
+			if (key < upper) {
+				oracle.erase(oracle.lower_bound(key), oracle.lower_bound(upper));
+				++ranges;
+			} else {
+				++inverted;
+			}
 		}
 		agrees(map, oracle);
+		check(!map.find(-2) && !map.find(300));
+		for (Walk<Map, Oracle> walk(map, oracle, any()); walk.step();) {
+		}
 		if (step % 37 == 0) {
-			saved.emplace_back(map, oracle);
+			auto copy = std::make_unique<Saved>(Saved{map, oracle, std::nullopt});
+			copy->walk.emplace(copy->map, copy->oracle, any());
+			saved.push_back(std::move(copy));
 			if (saved.size() > 16)
 				saved.erase(saved.begin());
-			for (const auto &[version, values] : saved)
-				agrees(version, values);
+			for (auto &version : saved) {
+				agrees(version->map, version->oracle);
+				version->walk->step();
+			}
 		}
 		check(map.collect(7) <= 7);
 	}
+	check(ranges > 500 && inverted > 500);
+	// A version's last cursor keeps its nodes; once it goes, n-node turns drain them exactly.
 	auto held = std::optional(map.cursor());
 	saved.clear();
 	map.retire_root();
 	drain(map);
-	check(map.retained_nodes() > 0);
+	const auto retained = map.retained_nodes();
+	check(retained == oracle.size());
 	held.reset();
-	drain(map);
-	check(map.retained_nodes() == 0);
+	std::size_t turns = 0;
+	while (map.reclamation_pending()) {
+		check(map.collect(7) <= 7);
+		++turns;
+	}
+	check(map.retained_nodes() == 0 && turns == (retained + 6) / 7);
+}
+void copies_and_moves() {
+	using Map = persistent_map::PersistentMap<int, int>;
+	Map map;
+	for (int key = 0; key != 64; ++key)
+		map = map.set(key, key);
+	Map copy(map);
+	Map moved(std::move(copy));
+	check(moved.size() == 64 && *moved.find(10) == 10);
+	copy = moved.set(10, 11); // Assigning to a moved-from map.
+	check(*copy.find(10) == 11 && *moved.find(10) == 10);
+	const auto &alias = copy;
+	copy = alias; // Self-assignment.
+	check(copy.size() == 64);
+	const auto replaced = map.set(10, 12);
+	check(replaced.size() == 64 && *replaced.find(10) == 12 && *map.find(10) == 10);
+	check(map.erase(99).size() == 64 && map.erase_range(70, 90).size() == 64);
+	check(map.erase_range(0, 64).size() == 0 && map.size() == 64);
+	persistent_map::detail::InvariantAccess::verify(map.erase_range(10, 54));
 }
 struct Reverse {
 	bool descending = false;
@@ -182,26 +252,36 @@ void allocation_failures() {
 			map = map.set(key, key);
 		drain(map);
 		const auto baseline = state->bytes;
-		bool complete = false, queued_failure = false;
-		for (std::size_t failure = 0; failure != 64; ++failure) {
-			state->attempts = 0;
-			state->fail_at = failure;
-			try {
-				auto changed = map.set(99, 99);
-				check(changed.find(99));
-				complete = true;
-			} catch (const std::bad_alloc &) {
-				queued_failure |= map.reclamation_pending();
+		// Fails each allocation of set, erase and erase_range in turn, up to the first success.
+		for (int operation = 0; operation != 3; ++operation) {
+			bool complete = false, queued_failure = false;
+			std::size_t failures = 0;
+			for (std::size_t failure = 0; failure != 64; ++failure) {
+				state->attempts = 0;
+				state->fail_at = failure;
+				try {
+					auto changed = operation == 0 ? map.set(99, 99)
+					               : operation == 1 ? map.erase(15)
+					                                : map.erase_range(5, 20);
+					persistent_map::detail::InvariantAccess::verify(changed);
+					check(operation == 0 ? changed.find(99) && changed.size() == 32
+					      : operation == 1 ? !changed.find(15) && changed.size() == 30
+					                       : !changed.find(5) && !changed.find(19) && changed.size() == 16);
+					complete = true;
+				} catch (const std::bad_alloc &) {
+					queued_failure |= map.reclamation_pending();
+					++failures;
+				}
+				state->fail_at = std::numeric_limits<std::size_t>::max();
+				check(!map.find(99) && *map.find(15) == 15 && map.size() == 31);
+				persistent_map::detail::InvariantAccess::verify(map);
+				drain(map);
+				check(state->bytes == baseline && map.retained_nodes() == 31);
+				if (complete)
+					break;
 			}
-			state->fail_at = std::numeric_limits<std::size_t>::max();
-			check(!map.find(99) && map.size() == 31);
-			persistent_map::detail::InvariantAccess::verify(map);
-			drain(map);
-			check(state->bytes == baseline && map.retained_nodes() == 31);
-			if (complete)
-				break;
+			check(complete && queued_failure && failures > 1);
 		}
-		check(complete && queued_failure);
 		const auto attempts = state->attempts;
 		struct Deny {
 			Deny() { deny_new = true; }
@@ -319,12 +399,12 @@ void throwing_comparisons() {
 	persistent_map::PersistentMap<int, int, ThrowCompare> map(ThrowCompare{state});
 	for (int key = 0; key != 31; ++key)
 		map = map.set(key, key);
-	for (bool remove : {false, true}) {
+	for (int operation = 0; operation != 3; ++operation) {
 		bool complete = false;
 		for (int failure = 0; failure != 64; ++failure) {
 			state->remaining = failure;
 			try {
-				auto next = remove ? map.erase(15) : map.set(99, 99);
+				auto next = operation == 0 ? map.set(99, 99) : operation == 1 ? map.erase(15) : map.erase_range(5, 20);
 				complete = true;
 			} catch (const Injected &) {
 			}
@@ -437,6 +517,7 @@ void alignment_and_initial_failure() {
 int main() {
 	try {
 		randomized();
+		copies_and_moves();
 		ordering();
 		allocation_failures();
 		allocator_lifetime();

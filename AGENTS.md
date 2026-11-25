@@ -28,12 +28,21 @@ CC=clang CXX=clang++ cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
 cmake --build build-asan && ASAN_OPTIONS=detect_leaks=1 ctest --test-dir build-asan --output-on-failure
 ```
 
-The oracle is `std::map`: `persistent_map_test` applies 5,000 seeded random `set`s and `erase`s
-and compares the map, and up to 16 saved versions, with a `std::map` copied at the same step;
-a reversed comparator checks ordering, and `InvariantAccess::verify` checks the AVL invariants.
-Failure injection covers the rest: an allocator that fails the n-th allocation for each n in turn
-(each prior version must read back intact and every byte must come back), a global `operator new`
-that throws during reads, cursors and collection (none may allocate), and throwing values, keys,
-comparisons and comparator copies. The checks stay on in optimized builds. There is no bench,
-fuzz target or mutation script: the O(log n) path copy is a property of the algorithm, not a
-measured claim.
+The oracle is `std::map`: `persistent_map_test` applies 20,000 seeded random `set`s, `erase`s
+(most of them of missing keys) and `erase_range`s (inverted ranges included) and after every one
+compares the map with a `std::map`, checks the AVL balance, heights and subtree counts
+(`InvariantAccess::verify`) and walks a random lower bound. Every 37 steps it saves a version
+with a cursor part way through a lower-bound walk; up to 16 saved versions are rechecked and
+their cursors advanced while newer versions change. A reversed comparator checks ordering, and
+draining a released tree takes exactly `ceil(nodes / budget)` collection turns. Failure
+injection covers the rest: an allocator that fails the n-th allocation of `set`, `erase` and
+`erase_range` for each n in turn (each prior version must read back intact and every byte must
+come back), a global `operator new` that throws during reads, cursors and collection (none may
+allocate), and throwing values, keys, comparisons and comparator copies. The checks stay on in
+optimized builds. There is no fuzz target or mutation script.
+
+`bench/bench.cc` (`-DPERSISTENT_MAP_BENCH=ON`, or built by hand as its header says) reports
+lookup and update CPU, allocation requests, retained and peak heap and reclamation cost for
+1K-1M keys, update batches of 1, 16 and 128 and 1, 16 and 64 retained versions, beside
+`std::map` keeping each version as a whole copy. The numbers and their machine are in
+[docs/perf/costs.md](docs/perf/costs.md).

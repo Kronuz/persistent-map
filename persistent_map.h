@@ -167,6 +167,29 @@ class PersistentMap {
 		}
 		return balance(next->key, next->value, p->left, remove(p->right, next->key));
 	}
+	// Joins trees whose keys are below and above `k`, descending the taller spine.
+	Ptr join(const Ptr &l, const Key &k, const Value &v, const Ptr &r) {
+		if (h(l) > h(r) + 1)
+			return balance(l->key, l->value, l->left, join(l->right, k, v, r));
+		if (h(r) > h(l) + 1)
+			return balance(r->key, r->value, join(l, k, v, r->left), r->right);
+		return make(k, v, l, r);
+	}
+	// The keys below `k`, and the keys not below `k`.
+	template <class K> Ptr below(const Ptr &p, const K &k) {
+		if (!p)
+			return {};
+		if (std::as_const(arena_->compare)(p->key, k))
+			return join(p->left, p->key, p->value, below(p->right, k));
+		return below(p->left, k);
+	}
+	template <class K> Ptr from(const Ptr &p, const K &k) {
+		if (!p)
+			return {};
+		if (std::as_const(arena_->compare)(p->key, k))
+			return from(p->right, k);
+		return join(from(p->left, k), p->key, p->value, p->right);
+	}
 	template <class F> static void visit(const Ptr &p, F &f) {
 		if (!p) {
 			return;
@@ -253,6 +276,24 @@ class PersistentMap {
 	PersistentMap erase(const Key &k) const {
 		PersistentMap result = *this;
 		result.root_ = result.remove(root_, k);
+		return result;
+	}
+	// Removes every key in [lower, upper) with O(log n) new nodes; an empty or
+	// inverted range returns this version. Removed nodes queue for collect().
+	template <class K> PersistentMap erase_range(const K &lower, const K &upper) const {
+		PersistentMap result = *this;
+		if (!std::as_const(arena_->compare)(lower, upper))
+			return result;
+		auto left = result.below(root_, lower);
+		auto right = result.from(root_, upper);
+		if (!left || !right) {
+			result.root_ = left ? std::move(left) : std::move(right);
+			return result;
+		}
+		auto first = right.get();
+		while (first->left)
+			first = first->left.get();
+		result.root_ = result.join(left, first->key, first->value, result.remove(right, first->key));
 		return result;
 	}
 	template <class F> void for_each(F &&f) const { visit(root_, f); }
