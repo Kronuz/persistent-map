@@ -200,7 +200,8 @@ class PersistentMap {
 	}
 
   public:
-	explicit PersistentMap(Compare compare = {}, Alloc allocator = {})
+	PersistentMap() : PersistentMap(Compare{}) {}
+	explicit PersistentMap(Compare compare, Alloc allocator = {})
 	    : arena_(std::allocate_shared<Arena>(ArenaAllocator(allocator), std::move(compare), allocator)) {}
 	class Cursor {
 		std::shared_ptr<Arena> arena_;

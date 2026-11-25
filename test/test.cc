@@ -215,6 +215,9 @@ void copies_and_moves() {
 	const auto &alias = copy;
 	copy = alias; // Self-assignment.
 	check(copy.size() == 64);
+	Map empty = {}; // The default constructor is not explicit: `version = {}` resets.
+	copy = {};
+	check(empty.size() == 0 && copy.size() == 0 && moved.size() == 64);
 	const auto replaced = map.set(10, 12);
 	check(replaced.size() == 64 && *replaced.find(10) == 12 && *map.find(10) == 10);
 	check(map.erase(99).size() == 64 && map.erase_range(70, 90).size() == 64);
